@@ -227,6 +227,32 @@ DATASETS_CONFIG = {
         "min_depth": 1e-3,
         "max_depth": 80,
     },
+    "final_processed": {
+        "dataset": "final_processed",
+        "min_depth": 1e-3,
+        "max_depth": 80,
+        "data_path": os.path.join("..", "final_version_processed"),
+        "gt_path": os.path.join("..", "final_version_processed"),
+        "mask_path": os.path.join("..", "final_version_processed"),
+        "filenames_file": "./train_test_inputs/final_processed_train.txt",
+        "input_height": 512,
+        "input_width": 512,
+        "data_path_eval": os.path.join("..", "final_version_processed"),
+        "gt_path_eval": os.path.join("..", "final_version_processed"),
+        "mask_path_eval": os.path.join("..", "final_version_processed"),
+        "filenames_file_eval": "./train_test_inputs/final_processed_val.txt",
+        "min_depth_eval": 1e-3,
+        "max_depth_eval": 80,
+        "with_mask": True,
+        "default_focal": 1.0,
+        "cameras": ["left"],
+        "use_right": False,
+        "avoid_boundary": False,
+        "do_random_rotate": False,
+        "do_kb_crop": False,
+        "garg_crop": False,
+        "eigen_crop": False
+    },
 }
 
 ALL_INDOOR = ["nyu", "ibims", "sunrgbd", "diode_indoor", "hypersim_test"]

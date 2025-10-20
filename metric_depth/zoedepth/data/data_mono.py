@@ -289,25 +289,97 @@ class DataLoadPreprocess(Dataset):
     def postprocess(self, sample):
         return sample
 
+    def _safe_float(self, value, default):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _load_mask_image(self, rel_path, mode='train'):
+        if rel_path is None or rel_path == 'None':
+            return None
+        if mode == 'eval':
+            fallback_root = self.config.get("gt_path_eval", self.config.gt_path)
+            mask_root = self.config.get("mask_path_eval", self.config.get("mask_path", fallback_root))
+        else:
+            fallback_root = self.config.gt_path
+            mask_root = self.config.get("mask_path", fallback_root)
+
+        mask_path = os.path.join(mask_root, remove_leading_slash(rel_path))
+        mask_img = self.reader.open(mask_path)
+        if mask_img.mode != 'L':
+            mask_img = mask_img.convert('L')
+        return mask_img
+
+    def _mask_to_numpy(self, mask_img):
+        if mask_img is None:
+            return None
+        mask_arr = np.asarray(mask_img, dtype=np.float32)
+        if mask_arr.ndim == 2:
+            mask_arr = mask_arr[..., None]
+        else:
+            mask_arr = mask_arr[..., :1]
+        if mask_arr.max() > 1:
+            mask_arr = mask_arr / 255.0
+        return mask_arr
+
+    def _combine_masks(self, depth_mask, file_mask):
+        if file_mask is None:
+            return depth_mask
+        combined = np.logical_and(depth_mask, file_mask.squeeze() > 0.5)
+        return combined
+
     def __getitem__(self, idx):
         sample_path = self.filenames[idx]
-        focal = float(sample_path.split()[2])
+        parts = sample_path.strip().split()
+
+        if len(parts) < 2:
+            raise ValueError(f"Malformed sample entry: '{sample_path}'")
+
+        img_rel, depth_rel = parts[0], parts[1]
+        mask_rel = None
+        right_img_rel = None
+        right_depth_rel = None
+
+        default_focal = float(self.config.get("default_focal", 1.0))
+        focal = default_focal
+
+        if self.config.dataset == 'kitti' and self.config.use_right:
+            if len(parts) < 5:
+                raise ValueError(
+                    "Expected five columns (image, depth, focal, right_image, right_depth) for KITTI with right camera enabled.")
+            focal = self._safe_float(parts[2], default_focal)
+            right_img_rel = parts[3]
+            right_depth_rel = parts[4]
+        else:
+            if self.config.get("with_mask", False):
+                if len(parts) >= 3:
+                    mask_rel = parts[2]
+                if len(parts) >= 4:
+                    focal = self._safe_float(parts[3], default_focal)
+            else:
+                if len(parts) >= 3:
+                    focal = self._safe_float(parts[2], default_focal)
+
         sample = {}
 
         if self.mode == 'train':
+            img_rel_curr = img_rel
+            depth_rel_curr = depth_rel
+            mask_rel_curr = mask_rel
+
             if self.config.dataset == 'kitti' and self.config.use_right and random.random() > 0.5:
-                image_path = os.path.join(
-                    self.config.data_path, remove_leading_slash(sample_path.split()[3]))
-                depth_path = os.path.join(
-                    self.config.gt_path, remove_leading_slash(sample_path.split()[4]))
-            else:
-                image_path = os.path.join(
-                    self.config.data_path, remove_leading_slash(sample_path.split()[0]))
-                depth_path = os.path.join(
-                    self.config.gt_path, remove_leading_slash(sample_path.split()[1]))
+                img_rel_curr = right_img_rel
+                depth_rel_curr = right_depth_rel
+
+            image_path = os.path.join(
+                self.config.data_path, remove_leading_slash(img_rel_curr))
+            depth_path = os.path.join(
+                self.config.gt_path, remove_leading_slash(depth_rel_curr))
 
             image = self.reader.open(image_path)
-            depth_gt = self.reader.open(depth_path)
+            depth_gt_img = self.reader.open(depth_path)
+            mask_img = self._load_mask_image(mask_rel_curr, mode='train')
             w, h = image.size
 
             if self.config.do_kb_crop:
@@ -315,40 +387,51 @@ class DataLoadPreprocess(Dataset):
                 width = image.width
                 top_margin = int(height - 352)
                 left_margin = int((width - 1216) / 2)
-                depth_gt = depth_gt.crop(
+                depth_gt_img = depth_gt_img.crop(
                     (left_margin, top_margin, left_margin + 1216, top_margin + 352))
                 image = image.crop(
                     (left_margin, top_margin, left_margin + 1216, top_margin + 352))
+                if mask_img is not None:
+                    mask_img = mask_img.crop(
+                        (left_margin, top_margin, left_margin + 1216, top_margin + 352))
 
-            # Avoid blank boundaries due to pixel registration?
-            # Train images have white border. Test images have black border.
             if self.config.dataset == 'nyu' and self.config.avoid_boundary:
-                # print("Avoiding Blank Boundaries!")
-                # We just crop and pad again with reflect padding to original size
-                # original_size = image.size
                 crop_params = get_white_border(np.array(image, dtype=np.uint8))
                 image = image.crop((crop_params.left, crop_params.top, crop_params.right, crop_params.bottom))
-                depth_gt = depth_gt.crop((crop_params.left, crop_params.top, crop_params.right, crop_params.bottom))
+                depth_gt_img = depth_gt_img.crop((crop_params.left, crop_params.top, crop_params.right, crop_params.bottom))
+                if mask_img is not None:
+                    mask_arr = np.array(mask_img, dtype=np.uint8)
+                    mask_arr = mask_arr[crop_params.top:crop_params.bottom,
+                                        crop_params.left:crop_params.right]
+                    mask_pad = np.pad(mask_arr, ((crop_params.top, h - crop_params.bottom),
+                                                 (crop_params.left, w - crop_params.right)),
+                                      'constant', constant_values=0)
+                    mask_img = Image.fromarray(mask_pad.astype(np.uint8))
 
-                # Use reflect padding to fill the blank
                 image = np.array(image)
                 image = np.pad(image, ((crop_params.top, h - crop_params.bottom), (crop_params.left, w - crop_params.right), (0, 0)), mode='reflect')
                 image = Image.fromarray(image)
 
-                depth_gt = np.array(depth_gt)
-                depth_gt = np.pad(depth_gt, ((crop_params.top, h - crop_params.bottom), (crop_params.left, w - crop_params.right)), 'constant', constant_values=0)
-                depth_gt = Image.fromarray(depth_gt)
-
+                depth_gt = np.array(depth_gt_img)
+                depth_gt = np.pad(depth_gt, ((crop_params.top, h - crop_params.bottom),
+                                             (crop_params.left, w - crop_params.right)),
+                                   'constant', constant_values=0)
+                depth_gt_img = Image.fromarray(depth_gt)
 
             if self.config.do_random_rotate and (self.config.aug):
                 random_angle = (random.random() - 0.5) * 2 * self.config.degree
                 image = self.rotate_image(image, random_angle)
-                depth_gt = self.rotate_image(
-                    depth_gt, random_angle, flag=Image.NEAREST)
+                depth_gt_img = self.rotate_image(
+                    depth_gt_img, random_angle, flag=Image.NEAREST)
+                if mask_img is not None:
+                    mask_img = self.rotate_image(
+                        mask_img, random_angle, flag=Image.NEAREST)
 
             image = np.asarray(image, dtype=np.float32) / 255.0
-            depth_gt = np.asarray(depth_gt, dtype=np.float32)
+            depth_gt = np.asarray(depth_gt_img, dtype=np.float32)
             depth_gt = np.expand_dims(depth_gt, axis=2)
+
+            mask_np = self._mask_to_numpy(mask_img)
 
             if self.config.dataset == 'nyu':
                 depth_gt = depth_gt / 1000.0
@@ -356,74 +439,86 @@ class DataLoadPreprocess(Dataset):
                 depth_gt = depth_gt / 256.0
 
             if self.config.aug and (self.config.random_crop):
-                image, depth_gt = self.random_crop(
-                    image, depth_gt, self.config.input_height, self.config.input_width)
-            
-            if self.config.aug and self.config.random_translate:
-                # print("Random Translation!")
-                image, depth_gt = self.random_translate(image, depth_gt, self.config.max_translation)
+                image, depth_gt, mask_np = self.random_crop(
+                    image, depth_gt, self.config.input_height, self.config.input_width, mask=mask_np)
 
-            image, depth_gt = self.train_preprocess(image, depth_gt)
-            mask = np.logical_and(depth_gt > self.config.min_depth,
-                                  depth_gt < self.config.max_depth).squeeze()[None, ...]
+            if self.config.aug and self.config.random_translate:
+                image, depth_gt, mask_np = self.random_translate(image, depth_gt, self.config.max_translation, mask=mask_np)
+
+            image, depth_gt, mask_np = self.train_preprocess(image, depth_gt, mask_np)
+
+            mask_depth = np.logical_and(depth_gt > self.config.min_depth,
+                                        depth_gt < self.config.max_depth).squeeze()
+            final_mask = self._combine_masks(mask_depth, mask_np)
+            final_mask = final_mask[None, ...]
+
             sample = {'image': image, 'depth': depth_gt, 'focal': focal,
-                      'mask': mask, **sample}
+                      'mask': final_mask}
 
         else:
             if self.mode == 'online_eval':
                 data_path = self.config.data_path_eval
+                gt_path = self.config.gt_path_eval
+                mask_img = self._load_mask_image(mask_rel, mode='eval')
             else:
                 data_path = self.config.data_path
+                gt_path = self.config.gt_path
+                mask_img = self._load_mask_image(mask_rel, mode='train')
 
             image_path = os.path.join(
-                data_path, remove_leading_slash(sample_path.split()[0]))
-            image = np.asarray(self.reader.open(image_path),
-                               dtype=np.float32) / 255.0
+                data_path, remove_leading_slash(img_rel))
+            image_np = np.asarray(self.reader.open(image_path),
+                                  dtype=np.float32) / 255.0
 
             if self.mode == 'online_eval':
-                gt_path = self.config.gt_path_eval
                 depth_path = os.path.join(
-                    gt_path, remove_leading_slash(sample_path.split()[1]))
+                    gt_path, remove_leading_slash(depth_rel))
                 has_valid_depth = False
                 try:
-                    depth_gt = self.reader.open(depth_path)
+                    depth_gt_img = self.reader.open(depth_path)
                     has_valid_depth = True
                 except IOError:
-                    depth_gt = False
-                    # print('Missing gt for {}'.format(image_path))
+                    depth_gt_img = None
 
                 if has_valid_depth:
-                    depth_gt = np.asarray(depth_gt, dtype=np.float32)
+                    depth_gt = np.asarray(depth_gt_img, dtype=np.float32)
                     depth_gt = np.expand_dims(depth_gt, axis=2)
                     if self.config.dataset == 'nyu':
                         depth_gt = depth_gt / 1000.0
                     else:
                         depth_gt = depth_gt / 256.0
 
-                    mask = np.logical_and(
-                        depth_gt >= self.config.min_depth, depth_gt <= self.config.max_depth).squeeze()[None, ...]
+                    mask_np = self._mask_to_numpy(mask_img)
+                    mask_valid = np.logical_and(
+                        depth_gt >= self.config.min_depth, depth_gt <= self.config.max_depth).squeeze()
+                    final_mask = self._combine_masks(mask_valid, mask_np)
+                    final_mask = final_mask[None, ...]
                 else:
-                    mask = False
+                    final_mask = False
 
             if self.config.do_kb_crop:
-                height = image.shape[0]
-                width = image.shape[1]
+                height = image_np.shape[0]
+                width = image_np.shape[1]
                 top_margin = int(height - 352)
                 left_margin = int((width - 1216) / 2)
-                image = image[top_margin:top_margin + 352,
-                              left_margin:left_margin + 1216, :]
+                image_np = image_np[top_margin:top_margin + 352,
+                                    left_margin:left_margin + 1216, :]
                 if self.mode == 'online_eval' and has_valid_depth:
                     depth_gt = depth_gt[top_margin:top_margin +
                                         352, left_margin:left_margin + 1216, :]
+                    if final_mask is not False:
+                        final_mask = final_mask[:, top_margin:top_margin +
+                                                352, left_margin:left_margin + 1216]
 
             if self.mode == 'online_eval':
-                sample = {'image': image, 'depth': depth_gt, 'focal': focal, 'has_valid_depth': has_valid_depth,
-                          'image_path': sample_path.split()[0], 'depth_path': sample_path.split()[1],
-                          'mask': mask}
+                sample = {'image': image_np, 'depth': depth_gt, 'focal': focal, 'has_valid_depth': has_valid_depth,
+                          'image_path': img_rel, 'depth_path': depth_rel,
+                          'mask': final_mask}
             else:
-                sample = {'image': image, 'focal': focal}
+                sample = {'image': image_np, 'focal': focal}
 
-        if (self.mode == 'train') or ('has_valid_depth' in sample and sample['has_valid_depth']):
+        if ((self.mode == 'train') or ('has_valid_depth' in sample and sample['has_valid_depth'])) and 'mask' not in sample:
+            depth_gt = sample.get('depth')
             mask = np.logical_and(depth_gt > self.config.min_depth,
                                   depth_gt < self.config.max_depth).squeeze()[None, ...]
             sample['mask'] = mask
@@ -433,7 +528,9 @@ class DataLoadPreprocess(Dataset):
 
         sample = self.postprocess(sample)
         sample['dataset'] = self.config.dataset
-        sample = {**sample, 'image_path': sample_path.split()[0], 'depth_path': sample_path.split()[1]}
+        sample = {**sample, 'image_path': img_rel, 'depth_path': depth_rel}
+        if mask_rel is not None:
+            sample['mask_path'] = mask_rel
 
         return sample
 
@@ -441,7 +538,7 @@ class DataLoadPreprocess(Dataset):
         result = image.rotate(angle, resample=flag)
         return result
 
-    def random_crop(self, img, depth, height, width):
+    def random_crop(self, img, depth, height, width, mask=None):
         assert img.shape[0] >= height
         assert img.shape[1] >= width
         assert img.shape[0] == depth.shape[0]
@@ -450,16 +547,18 @@ class DataLoadPreprocess(Dataset):
         y = random.randint(0, img.shape[0] - height)
         img = img[y:y + height, x:x + width, :]
         depth = depth[y:y + height, x:x + width, :]
+        if mask is not None:
+            mask = mask[y:y + height, x:x + width, ...]
 
-        return img, depth
+        return img, depth, mask
     
-    def random_translate(self, img, depth, max_t=20):
+    def random_translate(self, img, depth, max_t=20, mask=None):
         assert img.shape[0] == depth.shape[0]
         assert img.shape[1] == depth.shape[1]
         p = self.config.translate_prob
         do_translate = random.random()
         if do_translate > p:
-            return img, depth
+            return img, depth, mask
         x = random.randint(-max_t, max_t)
         y = random.randint(-max_t, max_t)
         M = np.float32([[1, 0, x], [0, 1, y]])
@@ -467,23 +566,29 @@ class DataLoadPreprocess(Dataset):
         img = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]))
         depth = cv2.warpAffine(depth, M, (depth.shape[1], depth.shape[0]))
         depth = depth.squeeze()[..., None]  # add channel dim back. Affine warp removes it
+        if mask is not None:
+            mask = mask.squeeze()
+            mask = cv2.warpAffine(mask.astype(np.float32), M, (mask.shape[1], mask.shape[0]))
+            mask = mask[..., None]
         # print("after", img.shape, depth.shape)
-        return img, depth
+        return img, depth, mask
 
-    def train_preprocess(self, image, depth_gt):
+    def train_preprocess(self, image, depth_gt, mask=None):
         if self.config.aug:
             # Random flipping
             do_flip = random.random()
             if do_flip > 0.5:
                 image = (image[:, ::-1, :]).copy()
                 depth_gt = (depth_gt[:, ::-1, :]).copy()
+                if mask is not None:
+                    mask = (mask[:, ::-1, :]).copy()
 
             # Random gamma, brightness, color augmentation
             do_augment = random.random()
             if do_augment > 0.5:
                 image = self.augment_image(image)
 
-        return image, depth_gt
+        return image, depth_gt, mask
 
     def augment_image(self, image):
         # gamma augmentation

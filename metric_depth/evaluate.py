@@ -99,7 +99,7 @@ def evaluate(model, test_loader, config, round_vals=True, round_precision=3):
 
 
         # print(depth.shape, pred.shape)
-        metrics.update(compute_metrics(depth, pred, config=config))
+        metrics.update(compute_metrics(depth, pred, mask=sample.get('mask', None), config=config))
 
     if round_vals:
         def r(m): return round(m, round_precision)

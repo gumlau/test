@@ -157,49 +157,61 @@ def count_parameters(model, include_all=False):
 
 
 def compute_errors(gt, pred):
-    """Compute metrics for 'pred' compared to 'gt'
+    """Compute depth evaluation metrics for ``pred`` vs ``gt``.
 
     Args:
-        gt (numpy.ndarray): Ground truth values
-        pred (numpy.ndarray): Predicted values
-
-        gt.shape should be equal to pred.shape
+        gt (numpy.ndarray): Ground truth depth values.
+        pred (numpy.ndarray): Predicted depth values.
 
     Returns:
-        dict: Dictionary containing the following metrics:
-            'a1': Delta1 accuracy: Fraction of pixels that are within a scale factor of 1.25
-            'a2': Delta2 accuracy: Fraction of pixels that are within a scale factor of 1.25^2
-            'a3': Delta3 accuracy: Fraction of pixels that are within a scale factor of 1.25^3
-            'abs_rel': Absolute relative error
-            'rmse': Root mean squared error
-            'log_10': Absolute log10 error
-            'sq_rel': Squared relative error
-            'rmse_log': Root mean squared error on the log scale
-            'silog': Scale invariant log error
+        dict[str, float]: Collection of standard depth metrics.
     """
+    if gt.size == 0:
+        return {
+            'd0.5': np.nan,
+            'd1': np.nan,
+            'd2': np.nan,
+            'd3': np.nan,
+            'a1': np.nan,
+            'a2': np.nan,
+            'a3': np.nan,
+            'abs_rel': np.nan,
+            'sq_rel': np.nan,
+            'rmse': np.nan,
+            'rmse_log': np.nan,
+            'rmse_log10': np.nan,
+            'log10': np.nan,
+            'silog': np.nan
+        }
+
     thresh = np.maximum((gt / pred), (pred / gt))
-    a1 = (thresh < 1.25).mean()
-    a2 = (thresh < 1.25 ** 2).mean()
-    a3 = (thresh < 1.25 ** 3).mean()
+
+    d0_5 = (thresh < 1.25 ** 0.5).mean()
+    d1 = (thresh < 1.25).mean()
+    d2 = (thresh < 1.25 ** 2).mean()
+    d3 = (thresh < 1.25 ** 3).mean()
 
     abs_rel = np.mean(np.abs(gt - pred) / gt)
     sq_rel = np.mean(((gt - pred) ** 2) / gt)
 
-    rmse = (gt - pred) ** 2
-    rmse = np.sqrt(rmse.mean())
+    rmse = np.sqrt(np.mean((gt - pred) ** 2))
 
-    rmse_log = (np.log(gt) - np.log(pred)) ** 2
-    rmse_log = np.sqrt(rmse_log.mean())
+    rmse_log = np.sqrt(np.mean((np.log(gt) - np.log(pred)) ** 2))
+    rmse_log10 = np.sqrt(np.mean((np.log10(gt) - np.log10(pred)) ** 2))
 
     err = np.log(pred) - np.log(gt)
     silog = np.sqrt(np.mean(err ** 2) - np.mean(err) ** 2) * 100
 
-    log_10 = (np.abs(np.log10(gt) - np.log10(pred))).mean()
-    return dict(a1=a1, a2=a2, a3=a3, abs_rel=abs_rel, rmse=rmse, log_10=log_10, rmse_log=rmse_log,
+    log10 = np.mean(np.abs(np.log10(gt) - np.log10(pred)))
+
+    return dict(d0.5=d0_5, d1=d1, d2=d2, d3=d3,
+                a1=d1, a2=d2, a3=d3,
+                abs_rel=abs_rel, rmse=rmse, rmse_log=rmse_log,
+                rmse_log10=rmse_log10, log10=log10,
                 silog=silog, sq_rel=sq_rel)
 
 
-def compute_metrics(gt, pred, interpolate=True, garg_crop=False, eigen_crop=True, dataset='nyu', min_depth_eval=0.1, max_depth_eval=10, **kwargs):
+def compute_metrics(gt, pred, mask=None, interpolate=True, garg_crop=False, eigen_crop=True, dataset='nyu', min_depth_eval=0.1, max_depth_eval=10, **kwargs):
     """Compute metrics of predicted depth maps. Applies cropping and masking as necessary or specified via arguments. Refer to compute_errors for more details on metrics.
     """
     if 'config' in kwargs:
@@ -213,15 +225,29 @@ def compute_metrics(gt, pred, interpolate=True, garg_crop=False, eigen_crop=True
         pred = nn.functional.interpolate(
             pred, gt.shape[-2:], mode='bilinear', align_corners=True)
 
-    pred = pred.squeeze().cpu().numpy()
+    pred = pred.squeeze().detach().cpu().numpy()
     pred[pred < min_depth_eval] = min_depth_eval
     pred[pred > max_depth_eval] = max_depth_eval
     pred[np.isinf(pred)] = max_depth_eval
     pred[np.isnan(pred)] = min_depth_eval
 
-    gt_depth = gt.squeeze().cpu().numpy()
+    gt_depth = gt.squeeze().detach().cpu().numpy()
     valid_mask = np.logical_and(
         gt_depth > min_depth_eval, gt_depth < max_depth_eval)
+
+    if mask is False:
+        return compute_errors(np.array([]), np.array([]))
+
+    extra_mask = None
+    if mask is not None:
+        if isinstance(mask, torch.Tensor):
+            extra_mask = mask.squeeze().detach().cpu().numpy().astype(bool)
+        else:
+            extra_mask = np.asarray(mask).squeeze().astype(bool)
+        if extra_mask.shape != valid_mask.shape:
+            raise ValueError(
+                f"Mask shape {extra_mask.shape} does not match depth shape {valid_mask.shape}")
+        valid_mask = np.logical_and(valid_mask, extra_mask)
 
     if garg_crop or eigen_crop:
         gt_height, gt_width = gt_depth.shape
@@ -242,6 +268,8 @@ def compute_metrics(gt, pred, interpolate=True, garg_crop=False, eigen_crop=True
         else:
             eval_mask = np.ones(valid_mask.shape)
     valid_mask = np.logical_and(valid_mask, eval_mask)
+    if valid_mask.sum() == 0:
+        return compute_errors(np.array([]), np.array([]))
     return compute_errors(gt_depth[valid_mask], pred[valid_mask])
 
 

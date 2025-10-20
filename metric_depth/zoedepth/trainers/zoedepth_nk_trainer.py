@@ -126,13 +126,12 @@ class Trainer(BaseTrainer):
             pred_depths = m(images)["metric_depth"]
         pred_depths = pred_depths.squeeze().unsqueeze(0).unsqueeze(0)
 
-        mask = torch.logical_and(
-            depths_gt > self.config.min_depth, depths_gt < self.config.max_depth)
+        mask = batch["mask"].to(self.device).to(torch.bool)
         with amp.autocast(enabled=self.config.use_amp):
             l_depth = self.silog_loss(
                 pred_depths, depths_gt, mask=mask.to(torch.bool), interpolate=True)
 
-        metrics = compute_metrics(depths_gt, pred_depths, **self.config)
+        metrics = compute_metrics(depths_gt, pred_depths, mask=mask, **self.config)
         losses = {f"{self.silog_loss.name}": l_depth.item()}
 
         if val_step == 1 and self.should_log:
