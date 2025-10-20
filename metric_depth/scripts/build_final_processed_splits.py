@@ -5,7 +5,7 @@ import argparse
 import json
 import random
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Set, Tuple
 
 try:
     from PIL import Image
@@ -102,15 +102,34 @@ def focal_from_intrinsics(
     return float(lens) / float(sensor_width) * float(img_width)
 
 
+def iter_scene_dirs(dataset_root: Path) -> List[Path]:
+    """Return available scene directories even if dataset_root is itself a scene."""
+    if not dataset_root.exists():
+        return []
+
+    candidates: List[Path] = []
+    if dataset_root.is_dir():
+        if dataset_root.name.startswith("s") and dataset_root.name.endswith("_processed"):
+            candidates.append(dataset_root)
+        candidates.extend(sorted(p for p in dataset_root.glob("s*_processed") if p.is_dir()))
+
+    seen: Set[Path] = set()
+    ordered: List[Path] = []
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        ordered.append(path)
+    return ordered
+
+
 def collect_samples(
     dataset_root: Path,
     cameras: Iterable[str],
     default_focal: float,
 ) -> List[Tuple[str, str, str, float]]:
     samples: List[Tuple[str, str, str, float]] = []
-    for scene_dir in sorted(dataset_root.glob("s*_processed")):
-        if not scene_dir.is_dir():
-            continue
+    for scene_dir in iter_scene_dirs(dataset_root):
         intrinsics = load_intrinsics(scene_dir)
         for camera in cameras:
             cam_dir = scene_dir / camera
