@@ -32,8 +32,13 @@ import pathlib
 import platform
 
 ROOT = pathlib.Path(__file__).parent.parent.resolve()
+PROJECT_ROOT = ROOT.parent.resolve()
 
 HOME_DIR = os.path.expanduser("./data")
+
+def _project_path(*parts: str) -> str:
+    """Return an absolute path inside the project regardless of cwd."""
+    return str(PROJECT_ROOT.joinpath(*parts))
 
 COMMON_CONFIG = {
     "save_dir": os.path.expanduser("./depth_anything_finetune"),
@@ -234,13 +239,13 @@ DATASETS_CONFIG = {
         "data_path": os.path.join("..", "final_version_processed"),
         "gt_path": os.path.join("..", "final_version_processed"),
         "mask_path": os.path.join("..", "final_version_processed"),
-        "filenames_file": "./train_test_inputs/final_processed_train.txt",
+        "filenames_file": _project_path("train_test_inputs", "final_processed_train.txt"),
         "input_height": 512,
         "input_width": 512,
         "data_path_eval": os.path.join("..", "final_version_processed"),
         "gt_path_eval": os.path.join("..", "final_version_processed"),
         "mask_path_eval": os.path.join("..", "final_version_processed"),
-        "filenames_file_eval": "./train_test_inputs/final_processed_val.txt",
+        "filenames_file_eval": _project_path("train_test_inputs", "final_processed_val.txt"),
         "min_depth_eval": 1e-3,
         "max_depth_eval": 80,
         "with_mask": True,
