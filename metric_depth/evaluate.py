@@ -37,6 +37,22 @@ from zoedepth.utils.misc import (RunningAverageDict, colors, compute_metrics,
                         count_parameters)
 
 
+def prepare_eval_config(config, dataset):
+    """Apply sensible defaults for zero-shot evaluation on custom datasets."""
+    config.mode = "eval"
+    config.distributed = False
+    config.aug = False
+    config.random_crop = False
+    config.random_translate = False
+    config.batch_size = 1
+    config.bs = 1
+    config.workers = 1
+    config.num_workers = 1
+    config.shuffle_test = False
+    config.dataset = dataset
+    return config
+
+
 @torch.no_grad()
 def infer(model, images, **kwargs):
     """Inference with flip augmentation"""
@@ -125,6 +141,7 @@ def eval_model(model_name, pretrained_resource, dataset='nyu', **kwargs):
     # Load default pretrained resource defined in config if not set
     overwrite = {**kwargs, "pretrained_resource": pretrained_resource} if pretrained_resource else kwargs
     config = get_config(model_name, "eval", dataset, **overwrite)
+    config = prepare_eval_config(config, dataset)
     # config = change_dataset(config, dataset)  # change the dataset
     pprint(config)
     print(f"Evaluating {model_name} on {dataset}...")
