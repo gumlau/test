@@ -273,24 +273,24 @@ def compute_metrics(gt, pred, mask=None, interpolate=True, garg_crop=False, eige
                 f"Mask shape {extra_mask.shape} does not match depth shape {valid_mask.shape}")
         valid_mask = np.logical_and(valid_mask, extra_mask)
 
+    eval_mask = np.ones(valid_mask.shape, dtype=bool)
     if garg_crop or eigen_crop:
         gt_height, gt_width = gt_depth.shape
-        eval_mask = np.zeros(valid_mask.shape)
+        eval_mask = np.zeros(valid_mask.shape, dtype=bool)
 
         if garg_crop:
             eval_mask[int(0.40810811 * gt_height):int(0.99189189 * gt_height),
-                      int(0.03594771 * gt_width):int(0.96405229 * gt_width)] = 1
+                      int(0.03594771 * gt_width):int(0.96405229 * gt_width)] = True
 
         elif eigen_crop:
             # print("-"*10, " EIGEN CROP ", "-"*10)
             if dataset == 'kitti':
                 eval_mask[int(0.3324324 * gt_height):int(0.91351351 * gt_height),
-                          int(0.0359477 * gt_width):int(0.96405229 * gt_width)] = 1
+                          int(0.0359477 * gt_width):int(0.96405229 * gt_width)] = True
             else:
                 # assert gt_depth.shape == (480, 640), "Error: Eigen crop is currently only valid for (480, 640) images"
-                eval_mask[45:471, 41:601] = 1
-        else:
-            eval_mask = np.ones(valid_mask.shape)
+                eval_mask[45:471, 41:601] = True
+
     valid_mask = np.logical_and(valid_mask, eval_mask)
     if valid_mask.sum() == 0:
         return compute_errors(np.array([]), np.array([]))
