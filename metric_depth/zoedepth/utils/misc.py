@@ -204,11 +204,22 @@ def compute_errors(gt, pred):
 
     log10 = np.mean(np.abs(np.log10(gt) - np.log10(pred)))
 
-    return dict(d0.5=d0_5, d1=d1, d2=d2, d3=d3,
-                a1=d1, a2=d2, a3=d3,
-                abs_rel=abs_rel, rmse=rmse, rmse_log=rmse_log,
-                rmse_log10=rmse_log10, log10=log10,
-                silog=silog, sq_rel=sq_rel)
+    return {
+        'd0.5': d0_5,
+        'd1': d1,
+        'd2': d2,
+        'd3': d3,
+        'a1': d1,
+        'a2': d2,
+        'a3': d3,
+        'abs_rel': abs_rel,
+        'rmse': rmse,
+        'rmse_log': rmse_log,
+        'rmse_log10': rmse_log10,
+        'log10': log10,
+        'silog': silog,
+        'sq_rel': sq_rel,
+    }
 
 
 def compute_metrics(gt, pred, mask=None, interpolate=True, garg_crop=False, eigen_crop=True, dataset='nyu', min_depth_eval=0.1, max_depth_eval=10, **kwargs):
