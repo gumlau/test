@@ -50,6 +50,7 @@ def prepare_eval_config(config, dataset):
     config.num_workers = 1
     config.shuffle_test = False
     config.dataset = dataset
+    config.use_pretrained_midas = True
     return config
 
 
