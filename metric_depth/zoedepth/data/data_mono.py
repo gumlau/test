@@ -325,8 +325,17 @@ class DataLoadPreprocess(Dataset):
 
     def _combine_masks(self, depth_mask, file_mask):
         if file_mask is None:
-            return depth_mask
-        combined = np.logical_and(depth_mask, file_mask.squeeze() > 0.5)
+            return np.asarray(depth_mask)
+
+        depth_mask_np = np.asarray(depth_mask)
+        file_mask_np = np.asarray(file_mask)
+
+        if depth_mask_np.ndim > 2:
+            depth_mask_np = depth_mask_np[..., 0]
+        if file_mask_np.ndim > 2:
+            file_mask_np = file_mask_np[..., 0]
+
+        combined = np.logical_and(depth_mask_np, file_mask_np > 0.5)
         return combined
 
     def __getitem__(self, idx):
