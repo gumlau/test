@@ -143,6 +143,8 @@ def eval_model(model_name, pretrained_resource, dataset='nyu', **kwargs):
     overwrite = {**kwargs, "pretrained_resource": pretrained_resource} if pretrained_resource else kwargs
     config = get_config(model_name, "eval", dataset, **overwrite)
     config = prepare_eval_config(config, dataset)
+    if pretrained_resource:
+        config.pretrained_resource = pretrained_resource
     # config = change_dataset(config, dataset)  # change the dataset
     pprint(config)
     print(f"Evaluating {model_name} on {dataset}...")
