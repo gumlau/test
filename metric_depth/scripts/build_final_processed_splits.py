@@ -141,7 +141,7 @@ def collect_samples(
 
             # Cache image size for focal conversion
             try:
-                first_image = next(sorted(img_dir.glob("*")))
+                first_image = next(iter(sorted(img_dir.glob("*"))))
             except StopIteration:
                 continue
             if Image is not None:
