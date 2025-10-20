@@ -58,7 +58,7 @@ def _is_pil_image(img):
 
 
 def _is_numpy_image(img):
-    return isinstance(img, np.ndarray) and (img.ndim in {2, 3})
+    return isinstance(img, np.ndarray) and img.ndim >= 2
 
 
 def preprocessing_transforms(mode, **kwargs):
@@ -660,8 +660,16 @@ class ToTensor(object):
                 'pic should be PIL Image or ndarray. Got {}'.format(type(pic)))
 
         if isinstance(pic, np.ndarray):
-            img = torch.from_numpy(pic.transpose((2, 0, 1)))
-            return img
+            arr = np.asarray(pic)
+            while arr.ndim > 3 and arr.shape[-1] == 1:
+                arr = arr.squeeze(-1)
+
+            if arr.ndim == 2:
+                return torch.from_numpy(arr).unsqueeze(0)
+            if arr.ndim == 3:
+                return torch.from_numpy(arr.transpose((2, 0, 1)))
+
+            raise TypeError(f"Unsupported ndarray shape {arr.shape} for to_tensor")
 
         # handle PIL Image
         if pic.mode == 'I':
