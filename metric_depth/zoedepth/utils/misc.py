@@ -132,7 +132,20 @@ def colorize(value, vmin=None, vmax=None, cmap='gray_r', invalid_val=-99, invali
     # grey out the invalid values
 
     value[invalid_mask] = np.nan
-    cmapper = matplotlib.cm.get_cmap(cmap)
+    if hasattr(matplotlib.cm, "get_cmap"):
+        try:
+            cmapper = matplotlib.cm.get_cmap(cmap)
+        except ValueError:
+            cmapper = None
+    else:
+        cmapper = None
+
+    if cmapper is None:
+        try:
+            cmapper = matplotlib.colormaps[cmap]
+        except Exception as exc:
+            raise AttributeError(f"Colormap '{cmap}' not found in matplotlib.") from exc
+
     if value_transform:
         value = value_transform(value)
         # value = value / value.max()
