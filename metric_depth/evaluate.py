@@ -23,18 +23,54 @@
 # File author: Shariq Farooq Bhat
 
 import argparse
+import os
 from pprint import pprint
 
 import torch
+from torch.nn import functional as F
 from zoedepth.utils.easydict import EasyDict as edict
 from tqdm import tqdm
 
-from zoedepth.data.data_mono import DepthDataLoader
+from PIL import Image
+import numpy as np
+
+from zoedepth.data.data_mono import DepthDataLoader, remove_leading_slash
 from zoedepth.models.builder import build_model
 from zoedepth.utils.arg_utils import parse_unknown
 from zoedepth.utils.config import change_dataset, get_config, ALL_EVAL_DATASETS, ALL_INDOOR, ALL_OUTDOOR
 from zoedepth.utils.misc import (RunningAverageDict, colors, compute_metrics,
                         count_parameters)
+
+
+def get_instrument_mask(sample, config, device, target_shape):
+    root = getattr(config, "instrument_mask_path_eval",
+                   getattr(config, "instrument_mask_path", None))
+    subdir = getattr(config, "instrument_mask_subdir", "instrument_mask")
+    rel_path = sample.get('image_path', None)
+    if root is None or rel_path is None:
+        return None
+
+    rel_path = remove_leading_slash(rel_path)
+    parts = [p for p in rel_path.split('/') if p]
+    if 'imgs' not in parts:
+        return None
+
+    idx = parts.index('imgs')
+    parts[idx] = subdir
+    mask_rel = os.path.join(*parts)
+    mask_path = os.path.join(root, mask_rel)
+    if not os.path.exists(mask_path):
+        return None
+
+    mask_img = Image.open(mask_path).convert('L')
+    mask_arr = np.asarray(mask_img, dtype=np.uint8) > 127
+    if not np.any(mask_arr):
+        return None
+
+    mask_tensor = torch.from_numpy(mask_arr.astype(np.float32)).unsqueeze(0).unsqueeze(0).to(device)
+    if mask_tensor.shape[-2:] != target_shape:
+        mask_tensor = F.interpolate(mask_tensor, size=target_shape, mode='nearest')
+    return mask_tensor.to(torch.bool)
 
 
 def prepare_eval_config(config, dataset):
@@ -88,6 +124,7 @@ def infer(model, images, **kwargs):
 def evaluate(model, test_loader, config, round_vals=True, round_precision=3):
     model.eval()
     metrics = RunningAverageDict()
+    instrument_metrics = RunningAverageDict()
     for i, sample in tqdm(enumerate(test_loader), total=len(test_loader)):
         if 'has_valid_depth' in sample:
             if not sample['has_valid_depth']:
@@ -128,23 +165,39 @@ def evaluate(model, test_loader, config, round_vals=True, round_precision=3):
         # print(depth.shape, pred.shape)
         metrics.update(compute_metrics(depth, pred, mask=sample.get('mask', None), config=config))
 
+        inst_mask = get_instrument_mask(sample, config, depth.device, depth.shape[-2:])
+        if inst_mask is not None:
+            instrument_metrics.update(compute_metrics(depth, pred, mask=inst_mask, config=config))
+
     if round_vals:
         def r(m): return round(m, round_precision)
     else:
         def r(m): return m
     metrics = {k: r(v) for k, v in metrics.get_value().items()}
-    return metrics
+    inst_values = instrument_metrics.get_value()
+    if inst_values:
+        inst_values = {k: r(v) for k, v in inst_values.items()}
+    else:
+        inst_values = None
+    return metrics, inst_values
 
 def main(config):
     model = build_model(config)
     test_loader = DepthDataLoader(config, 'online_eval').data
     model = model.cuda()
-    metrics = evaluate(model, test_loader, config)
+    overall_metrics, instrument_metrics = evaluate(model, test_loader, config)
     print(f"{colors.fg.green}")
-    print(metrics)
+    if instrument_metrics:
+        print({"overall": overall_metrics, "instrument": instrument_metrics})
+    else:
+        print(overall_metrics)
     print(f"{colors.reset}")
-    metrics['#params'] = f"{round(count_parameters(model, include_all=True)/1e6, 2)}M"
-    return metrics
+
+    combined = dict(overall_metrics)
+    if instrument_metrics:
+        combined.update({f"instrument/{k}": v for k, v in instrument_metrics.items()})
+    combined['#params'] = f"{round(count_parameters(model, include_all=True)/1e6, 2)}M"
+    return combined
 
 
 def eval_model(model_name, pretrained_resource, dataset='nyu', **kwargs):
