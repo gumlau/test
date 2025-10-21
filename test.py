@@ -6,6 +6,24 @@ import numpy as np
 from tqdm import tqdm
 from torchvision.transforms import Compose
 from depth_anything.util.transform import Resize, NormalizeImage, PrepareForNet
+import sys
+import importlib
+
+# Ensure local packages can be imported and provide a top-level 'zoedepth' alias
+project_root = Path(__file__).resolve().parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+try:
+    import zoedepth  # noqa: F401
+except ModuleNotFoundError:
+    try:
+        zmod = importlib.import_module("metric_depth.zoedepth")
+        # make the imported package available as top-level 'zoedepth'
+        sys.modules["zoedepth"] = zmod
+    except Exception:
+        # fall back to original import error if this fails
+        pass
+
 from metric_depth.zoedepth.utils.config import get_config
 from metric_depth.zoedepth.models.builder import build_model
 
@@ -45,5 +63,20 @@ for img_path in tqdm(sorted(input_dir.iterdir())):
     pred = torch.nn.functional.interpolate(
         pred, size=bgr.shape[:2][::-1], mode="bilinear", align_corners=False)
     depth = pred.squeeze().cpu().numpy()
+
+    # produce filename base and a simple visualization for saving as PNG
+    base = img_path.stem
+    # normalize depth to 0..255 and apply a colormap for visualization
+    d = depth.copy()
+    # handle NaNs/Infs safely
+    d = np.nan_to_num(d, nan=0.0, posinf=0.0, neginf=0.0)
+    mn, mx = float(np.min(d)), float(np.max(d))
+    if mx > mn:
+        norm = (d - mn) / (mx - mn)
+    else:
+        norm = np.zeros_like(d)
+    depth_vis = (255 * norm).astype(np.uint8)
+    depth_vis = cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
+
     cv2.imwrite(str(output_dir / f"{base}_depth.png"), depth_vis)
-    np.save(output_dir / f"{base}_depth.npy", depth)
+    np.save(str(output_dir / f"{base}_depth.npy"), depth)
