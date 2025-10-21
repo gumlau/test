@@ -285,6 +285,7 @@ COMMON_TRAINING_CONFIG = {
     "validate_every": 0.25,
     "log_images_every": 0.1,
     "prefetch": False,
+    "extra_ckpt_steps": [],
 }
 
 
@@ -436,6 +437,7 @@ def get_config(model_name, mode='train', dataset=None, **overwrite_kwargs):
 
     # Model specific post processing of config
     parse_list(config, "n_attractors")
+    parse_list(config, "extra_ckpt_steps")
 
     # adjust n_bins for each bin configuration if bin_conf is given and n_bins is passed in overwrite_kwargs
     if 'bin_conf' in config and 'n_bins' in overwrite_kwargs:
