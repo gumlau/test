@@ -62,8 +62,9 @@ for img_path in tqdm(sorted(input_dir.rglob("*"))):
 
     with torch.no_grad():
         pred = model(image)["metric_depth"]
+    # ensure size is (height, width) to match the input image
     pred = torch.nn.functional.interpolate(
-        pred, size=bgr.shape[:2][::-1], mode="bilinear", align_corners=False)
+        pred, size=(bgr.shape[0], bgr.shape[1]), mode="bilinear", align_corners=False)
     depth = pred.squeeze().cpu().numpy()
 
     # produce filename base and a simple visualization for saving as PNG
