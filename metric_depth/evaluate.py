@@ -191,6 +191,7 @@ def evaluate(model, test_loader, config, round_vals=True, round_precision=3):
                     f"instrument_pixels={inst_pixels} valid_instrument_pixels=0 "
                     f"mask_pixels={mask_pixels}"
                 )
+                continue
 
             instrument_metrics.update(compute_metrics(depth, pred, mask=inst_mask, config=config))
 
