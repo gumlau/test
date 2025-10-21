@@ -74,16 +74,16 @@ for img_path in tqdm(sorted(input_dir.rglob("*"))):
     out_subdir = output_dir / rel_dir
     out_subdir.mkdir(parents=True, exist_ok=True)
 
-    # normalize depth to 0..255 and apply a colormap for visualization
-    d = depth.copy()
-    d = np.nan_to_num(d, nan=0.0, posinf=0.0, neginf=0.0)
+    # produce grayscale (black-white) visualization like eval.py
+    d = np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
     mn, mx = float(np.min(d)), float(np.max(d))
     if mx > mn:
         norm = (d - mn) / (mx - mn)
     else:
         norm = np.zeros_like(d)
+    # convert to 8-bit grayscale (0=black, 255=white)
     depth_vis = (255 * norm).astype(np.uint8)
-    depth_vis = cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
 
+    # save single-channel PNG (grayscale) and the raw numpy depth
     cv2.imwrite(str(out_subdir / f"{base}_depth.png"), depth_vis)
     np.save(str(out_subdir / f"{base}_depth.npy"), depth)
