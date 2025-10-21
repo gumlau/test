@@ -50,6 +50,11 @@ def get_instrument_mask(sample, config, device, target_shape):
     if root is None or rel_path is None:
         return None
 
+    if isinstance(rel_path, (list, tuple)):
+        if len(rel_path) == 0:
+            return None
+        rel_path = rel_path[0]
+
     rel_path = remove_leading_slash(rel_path)
     parts = [p for p in rel_path.split('/') if p]
     if 'imgs' not in parts:
