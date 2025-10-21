@@ -447,7 +447,9 @@ class DataLoadPreprocess(Dataset):
             if self.config.dataset == 'nyu':
                 depth_gt = depth_gt / 1000.0
             else:
-                depth_gt = depth_gt / 256.0
+                scale = float(self.config.get('depth_scale_factor', 256.0))
+                if scale != 0:
+                    depth_gt = depth_gt / scale
 
             if self.config.aug and (self.config.random_crop):
                 image, depth_gt, mask_np = self.random_crop(
@@ -499,7 +501,9 @@ class DataLoadPreprocess(Dataset):
                     if self.config.dataset == 'nyu':
                         depth_gt = depth_gt / 1000.0
                     else:
-                        depth_gt = depth_gt / 256.0
+                        scale = float(self.config.get('depth_scale_factor', 256.0))
+                        if scale != 0:
+                            depth_gt = depth_gt / scale
 
                     mask_np = self._mask_to_numpy(mask_img)
                     mask_valid = np.logical_and(

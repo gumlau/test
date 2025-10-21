@@ -109,8 +109,15 @@ def evaluate(model, test_loader, config, round_vals=True, round_precision=3):
 
             os.makedirs(config.save_images, exist_ok=True)
             # def save_image(img, path):
-            d = colorize(depth.squeeze().cpu().numpy(), 0, 10)
-            p = colorize(pred.squeeze().cpu().numpy(), 0, 10)
+            vmin = getattr(config, "depth_viz_min", None)
+            vmax = getattr(config, "depth_viz_max", None)
+            if vmin is None:
+                vmin = getattr(config, "min_depth_eval", None)
+            if vmax is None:
+                vmax = getattr(config, "max_depth_eval", None)
+
+            d = colorize(depth.squeeze().cpu().numpy(), vmin, vmax, cmap='gray')
+            p = colorize(pred.squeeze().cpu().numpy(), vmin, vmax, cmap='gray')
             im = transforms.ToPILImage()(image.squeeze().cpu())
             im.save(os.path.join(config.save_images, f"{i}_img.png"))
             Image.fromarray(d).save(os.path.join(config.save_images, f"{i}_depth.png"))
