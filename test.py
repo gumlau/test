@@ -47,8 +47,10 @@ transform = Compose([
 ])
 
 exts = {".png", ".jpg", ".jpeg", ".bmp", ".tiff"}
-for img_path in tqdm(sorted(input_dir.iterdir())):
-    if img_path.suffix.lower() not in exts:
+
+# Replace the simple directory iteration with a recursive search and mirror output subfolders
+for img_path in tqdm(sorted(input_dir.rglob("*"))):
+    if not img_path.is_file() or img_path.suffix.lower() not in exts:
         continue
     bgr = cv2.imread(str(img_path))
     if bgr is None:
@@ -66,9 +68,14 @@ for img_path in tqdm(sorted(input_dir.iterdir())):
 
     # produce filename base and a simple visualization for saving as PNG
     base = img_path.stem
+
+    # Mirror input subfolder structure under output_dir
+    rel_dir = img_path.parent.relative_to(input_dir)
+    out_subdir = output_dir / rel_dir
+    out_subdir.mkdir(parents=True, exist_ok=True)
+
     # normalize depth to 0..255 and apply a colormap for visualization
     d = depth.copy()
-    # handle NaNs/Infs safely
     d = np.nan_to_num(d, nan=0.0, posinf=0.0, neginf=0.0)
     mn, mx = float(np.min(d)), float(np.max(d))
     if mx > mn:
@@ -78,5 +85,5 @@ for img_path in tqdm(sorted(input_dir.iterdir())):
     depth_vis = (255 * norm).astype(np.uint8)
     depth_vis = cv2.applyColorMap(depth_vis, cv2.COLORMAP_JET)
 
-    cv2.imwrite(str(output_dir / f"{base}_depth.png"), depth_vis)
-    np.save(str(output_dir / f"{base}_depth.npy"), depth)
+    cv2.imwrite(str(out_subdir / f"{base}_depth.png"), depth_vis)
+    np.save(str(out_subdir / f"{base}_depth.npy"), depth)
