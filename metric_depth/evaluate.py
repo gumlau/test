@@ -172,6 +172,26 @@ def evaluate(model, test_loader, config, round_vals=True, round_precision=3):
 
         inst_mask = get_instrument_mask(sample, config, depth.device, depth.shape[-2:])
         if inst_mask is not None:
+            inst_pixels = inst_mask.sum().item()
+            depth_valid = torch.logical_and(
+                depth > getattr(config, "min_depth_eval", 0.0),
+                depth < getattr(config, "max_depth_eval", float('inf')),
+            )
+            valid_inst = torch.logical_and(depth_valid, inst_mask)
+            valid_inst_pixels = valid_inst.sum().item()
+
+            if valid_inst_pixels == 0:
+                img_label = sample.get('image_path', '')
+                if isinstance(img_label, (list, tuple)) and img_label:
+                    img_label = img_label[0]
+                sample_mask = sample.get('mask', None)
+                mask_pixels = sample_mask.sum().item() if isinstance(sample_mask, torch.Tensor) else None
+                print(
+                    f"[Instrument metrics warning] sample={i} path={img_label} "
+                    f"instrument_pixels={inst_pixels} valid_instrument_pixels=0 "
+                    f"mask_pixels={mask_pixels}"
+                )
+
             instrument_metrics.update(compute_metrics(depth, pred, mask=inst_mask, config=config))
 
     if round_vals:
