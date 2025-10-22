@@ -8,6 +8,8 @@ from torchvision.transforms import Compose
 from depth_anything.util.transform import Resize, NormalizeImage, PrepareForNet
 import sys
 import importlib
+import matplotlib.cm as cm
+from PIL import Image
 
 # Ensure local packages can be imported and provide a top-level 'zoedepth' alias
 project_root = Path(__file__).resolve().parent
@@ -82,9 +84,13 @@ for img_path in tqdm(sorted(input_dir.rglob("*"))):
         norm = (d - mn) / (mx - mn)
     else:
         norm = np.zeros_like(d)
-    # convert to 8-bit grayscale (0=black, 255=white)
-    depth_vis = (255 * norm).astype(np.uint8)
+    # convert normalized gray to RGB using jet colormap and save with PIL
+    pred_image_normalized = norm  # values in [0,1]
+    jet_cmap = cm.get_cmap('jet')
+    pred_image_rgb = jet_cmap(pred_image_normalized)[:, :, :3]  # take RGB, drop alpha
+    pred_image_rgb = (pred_image_rgb * 255).astype(np.uint8)
 
-    # save single-channel PNG (grayscale) and the raw numpy depth
-    cv2.imwrite(str(out_subdir / f"{base}_depth.png"), depth_vis)
+    pil_image = Image.fromarray(pred_image_rgb)
+    pil_image.save(str(out_subdir / f"{base}_depth.png"))
+    # keep raw numpy depth
     np.save(str(out_subdir / f"{base}_depth.npy"), depth)
