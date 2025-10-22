@@ -161,9 +161,14 @@ def evaluate(model, test_loader, config, round_vals=True, round_precision=3):
             d = colorize(depth.squeeze().cpu().numpy(), vmin, vmax, cmap='gray')
             p = colorize(pred.squeeze().cpu().numpy(), vmin, vmax, cmap='gray')
             im = transforms.ToPILImage()(image.squeeze().cpu())
+            # ensure depth/pred visualizations match the input image resolution
+            target_size = im.size  # (width, height)
+            depth_vis = Image.fromarray(d).resize(target_size, resample=Image.BILINEAR)
+            pred_vis = Image.fromarray(p).resize(target_size, resample=Image.BILINEAR)
+
             im.save(os.path.join(config.save_images, f"{i}_img.png"))
-            Image.fromarray(d).save(os.path.join(config.save_images, f"{i}_depth.png"))
-            Image.fromarray(p).save(os.path.join(config.save_images, f"{i}_pred.png"))
+            depth_vis.save(os.path.join(config.save_images, f"{i}_depth.png"))
+            pred_vis.save(os.path.join(config.save_images, f"{i}_pred.png"))
 
 
 
