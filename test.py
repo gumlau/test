@@ -76,35 +76,51 @@ for img_path in tqdm(sorted(input_dir.rglob("*"))):
     out_subdir = output_dir / rel_dir
     out_subdir.mkdir(parents=True, exist_ok=True)
 
-    # produce grayscale (black-white) visualization like eval.py
-    # prepare depth for visualization:
-    # 1) fill thin border regions with inner-median to reduce edge artifacts,
-    # 2) normalize, apply small median filter to remove speckle, then colormap.
-    d = depth.copy()
-    h, w = d.shape[:2]
-    margin = max(10, int(min(h, w) * 0.02))  # 2% or at least 10px
-    # compute median from inner crop if possible
-    if h > 2 * margin and w > 2 * margin:
-        inner = d[margin:-margin, margin:-margin]
-        med = float(np.nanmedian(inner))
-    else:
-        med = float(np.nanmedian(d))
-    # fill borders with the inner median to mute boundary extremes
-    d[:margin, :] = med
-    d[-margin:, :] = med
-    d[:, :margin] = med
-    d[:, -margin:] = med
-
-    # handle NaN/Inf and compute min/max robustly
-    d = np.nan_to_num(d, nan=med, posinf=med, neginf=med)
-    mn, mx = float(np.nanmin(d)), float(np.nanmax(d))
+    # simple min-max normalization (x - min) / (max - min)
+    d = np.nan_to_num(depth, nan=0.0, posinf=0.0, neginf=0.0)
+    mn, mx = float(np.min(d)), float(np.max(d))
     if mx > mn:
         pred_image_normalized = (d - mn) / (mx - mn)
     else:
         pred_image_normalized = np.zeros_like(d)
 
-    # apply small median filter on 8-bit normalized image to remove small noisy regions
-    tmp_u8 = (np.clip(pred_image_normalized, 0.0, 1.0) * 255.0).astype(np.uint8)
+    # get a compatible colormap getter across matplotlib versions; fall back to None
+    try:
+        # matplotlib 3.8+ has `colormaps`
+        from matplotlib import colormaps
+        def _get_cmap(name):
+            return colormaps.get_cmap(name)
+    except Exception:
+        try:
+            import matplotlib.cm as _cm
+            def _get_cmap(name):
+                return _cm.get_cmap(name)
+        except Exception:
+            _get_cmap = None
+
+    if _get_cmap is not None:
+        jet_cmap = _get_cmap('jet')
+        pred_image_rgb = jet_cmap(pred_image_normalized)[:, :, :3]  # take RGB, drop alpha
+        pred_image_rgb = (pred_image_rgb * 255).astype(np.uint8)
+    else:
+        # fallback: use OpenCV's colormap (returns BGR), convert to RGB
+        tmp = (pred_image_normalized * 255).astype(np.uint8)
+        tmp_col = cv2.applyColorMap(tmp, cv2.COLORMAP_JET)  # BGR
+        pred_image_rgb = cv2.cvtColor(tmp_col, cv2.COLOR_BGR2RGB)
+
+    pil_image = Image.fromarray(pred_image_rgb)
+    pil_image.save(str(out_subdir / f"{base}_depth.png"))
+    # keep raw numpy depth
+    np.save(str(out_subdir / f"{base}_depth.npy"), depth)
+    # closing kernel scales with image size (small fraction)
+    k = max(3, int(min(h, w) * 0.03))
+    if k % 2 == 0:
+        k += 1
+    try:
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+        tmp_u8 = cv2.morphologyEx(tmp_u8, cv2.MORPH_CLOSE, kernel)
+    except Exception:
+        pass
     if min(h, w) >= 5:
         tmp_u8 = cv2.medianBlur(tmp_u8, 5)
     pred_image_normalized = (tmp_u8.astype(np.float32) / 255.0)
