@@ -10,6 +10,19 @@ import sys
 import importlib
 from PIL import Image
 
+# get a compatible colormap getter across matplotlib versions; define once
+try:
+    from matplotlib import colormaps
+    def _get_cmap(name):
+        return colormaps.get_cmap(name)
+except Exception:
+    try:
+        import matplotlib.cm as _cm
+        def _get_cmap(name):
+            return _cm.get_cmap(name)
+    except Exception:
+        _get_cmap = None
+
 # Ensure local packages can be imported and provide a top-level 'zoedepth' alias
 project_root = Path(__file__).resolve().parent
 if str(project_root) not in sys.path:
@@ -84,20 +97,6 @@ for img_path in tqdm(sorted(input_dir.rglob("*"))):
     else:
         pred_image_normalized = np.zeros_like(d)
 
-    # get a compatible colormap getter across matplotlib versions; fall back to None
-    try:
-        # matplotlib 3.8+ has `colormaps`
-        from matplotlib import colormaps
-        def _get_cmap(name):
-            return colormaps.get_cmap(name)
-    except Exception:
-        try:
-            import matplotlib.cm as _cm
-            def _get_cmap(name):
-                return _cm.get_cmap(name)
-        except Exception:
-            _get_cmap = None
-
     if _get_cmap is not None:
         jet_cmap = _get_cmap('jet')
         pred_image_rgb = jet_cmap(pred_image_normalized)[:, :, :3]  # take RGB, drop alpha
@@ -111,6 +110,7 @@ for img_path in tqdm(sorted(input_dir.rglob("*"))):
     pil_image = Image.fromarray(pred_image_rgb)
     pil_image.save(str(out_subdir / f"{base}_depth.png"))
     # keep raw numpy depth
+    np.save(str(out_subdir / f"{base}_depth.npy"), depth)
     np.save(str(out_subdir / f"{base}_depth.npy"), depth)
     # closing kernel scales with image size (small fraction)
     k = max(3, int(min(h, w) * 0.03))
