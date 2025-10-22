@@ -235,7 +235,7 @@ DATASETS_CONFIG = {
     "final_processed": {
         "dataset": "final_processed",
         "min_depth": 1e-3,
-        "max_depth": 80,
+        "max_depth": 80.0,
         "data_path": os.path.join("..", "final_version_processed"),
         "gt_path": os.path.join("..", "final_version_processed"),
         "mask_path": os.path.join("..", "final_version_processed"),
@@ -245,9 +245,15 @@ DATASETS_CONFIG = {
         "data_path_eval": os.path.join("..", "final_version_processed"),
         "gt_path_eval": os.path.join("..", "final_version_processed"),
         "mask_path_eval": os.path.join("..", "final_version_processed"),
+        "instrument_mask_path": os.path.join("..", "final_version_processed"),
+        "instrument_mask_path_eval": os.path.join("..", "final_version_processed"),
+        "instrument_mask_subdir": "instrument_mask",
         "filenames_file_eval": _project_path("train_test_inputs", "final_processed_val.txt"),
         "min_depth_eval": 1e-3,
-        "max_depth_eval": 80,
+        "max_depth_eval": 80.0,
+        "depth_scale_factor": 256.0,
+        "depth_viz_min": 0.0,
+        "depth_viz_max": 1.0,
         "with_mask": True,
         "default_focal": 1.0,
         "cameras": ["left"],
@@ -282,6 +288,7 @@ COMMON_TRAINING_CONFIG = {
     "validate_every": 0.25,
     "log_images_every": 0.1,
     "prefetch": False,
+    "extra_ckpt_steps": [],
 }
 
 
@@ -433,6 +440,7 @@ def get_config(model_name, mode='train', dataset=None, **overwrite_kwargs):
 
     # Model specific post processing of config
     parse_list(config, "n_attractors")
+    parse_list(config, "extra_ckpt_steps")
 
     # adjust n_bins for each bin configuration if bin_conf is given and n_bins is passed in overwrite_kwargs
     if 'bin_conf' in config and 'n_bins' in overwrite_kwargs:

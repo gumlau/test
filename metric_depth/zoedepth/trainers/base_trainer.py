@@ -60,6 +60,8 @@ class BaseTrainer:
         self.test_loader = test_loader
         self.optimizer = self.init_optimizer()
         self.scheduler = self.init_scheduler()
+        self.extra_ckpt_steps = set(getattr(self.config, "extra_ckpt_steps", []))
+        self._saved_extra_ckpt_steps = set()
 
     def resize_to_target(self, prediction, target):
         if prediction.shape[2:] != target.shape[-2:]:
@@ -199,6 +201,13 @@ class BaseTrainer:
                               for name, loss in losses.items()}, step=self.step)
 
                 self.step += 1
+
+                if (self.should_write and self.extra_ckpt_steps
+                        and self.step in self.extra_ckpt_steps
+                        and self.step not in self._saved_extra_ckpt_steps):
+                    self.save_checkpoint(
+                        f"{self.config.experiment_id}_step{self.step}.pt")
+                    self._saved_extra_ckpt_steps.add(self.step)
 
                 ########################################################################################################
 

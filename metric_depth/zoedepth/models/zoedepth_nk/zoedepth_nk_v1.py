@@ -327,13 +327,22 @@ class ZoeDepthNK(DepthModel):
         # core = MidasCore.build(midas_model_type=midas_model_type, use_pretrained_midas=use_pretrained_midas,
         #                        train_midas=train_midas, fetch_features=True, freeze_bn=freeze_midas_bn, **kwargs)
         
-        core = DepthAnythingCore.build(midas_model_type='dinov2_large', use_pretrained_midas=use_pretrained_midas,
-                                       train_midas=train_midas, fetch_features=True, freeze_bn=freeze_midas_bn, **kwargs)
-        
+        resource = kwargs.pop('pretrained_resource', pretrained_resource)
+
+        core = DepthAnythingCore.build(
+            midas_model_type='dinov2_large',
+            use_pretrained_midas=use_pretrained_midas,
+            train_midas=train_midas,
+            fetch_features=True,
+            freeze_bn=freeze_midas_bn,
+            pretrained_resource=resource,
+            **kwargs,
+        )
+
         model = ZoeDepthNK(core, **kwargs)
-        if pretrained_resource:
-            assert isinstance(pretrained_resource, str), "pretrained_resource must be a string"
-            model = load_state_from_resource(model, pretrained_resource)
+        if resource and not use_pretrained_midas:
+            assert isinstance(resource, str), "pretrained_resource must be a string"
+            model = load_state_from_resource(model, resource)
         return model
     
     @staticmethod

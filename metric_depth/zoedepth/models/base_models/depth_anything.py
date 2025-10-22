@@ -25,6 +25,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+from typing import Optional
 from torchvision.transforms import Normalize
 from zoedepth.models.base_models.dpt_dinov2.dpt import DPT_DINOv2
 
@@ -331,15 +332,36 @@ class DepthAnythingCore(nn.Module):
         self.output_channels = [256, 256, 256, 256, 256]
 
     @staticmethod
-    def build(midas_model_type="dinov2_large", train_midas=False, use_pretrained_midas=True, fetch_features=False, freeze_bn=True, force_keep_ar=False, force_reload=False, **kwargs):
+    def build(
+        midas_model_type="dinov2_large",
+        train_midas=False,
+        use_pretrained_midas=True,
+        fetch_features=False,
+        freeze_bn=True,
+        force_keep_ar=False,
+        force_reload=False,
+        pretrained_resource: Optional[str] = None,
+        **kwargs,
+    ):
         if "img_size" in kwargs:
             kwargs = DepthAnythingCore.parse_img_size(kwargs)
         img_size = kwargs.pop("img_size", [384, 384])
         
         depth_anything = DPT_DINOv2(out_channels=[256, 512, 1024, 1024], use_clstoken=False)
-        
-        state_dict = torch.load('./checkpoints/depth_anything_vitl14.pth', map_location='cpu')
-        depth_anything.load_state_dict(state_dict)
+
+        if use_pretrained_midas:
+            if pretrained_resource:
+                if pretrained_resource.startswith("local::"):
+                    load_path = pretrained_resource.split("local::", 1)[1]
+                    state_dict = torch.load(load_path, map_location='cpu')
+                elif pretrained_resource.startswith("url::"):
+                    url = pretrained_resource.split("url::", 1)[1]
+                    state_dict = torch.hub.load_state_dict_from_url(url, map_location='cpu', progress=True)
+                else:
+                    state_dict = torch.load(pretrained_resource, map_location='cpu')
+            else:
+                state_dict = torch.load('./checkpoints/depth_anything_vitl14.pth', map_location='cpu')
+            depth_anything.load_state_dict(state_dict)
         
         kwargs.update({'keep_aspect_ratio': force_keep_ar})
         
