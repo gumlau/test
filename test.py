@@ -8,7 +8,6 @@ from torchvision.transforms import Compose
 from depth_anything.util.transform import Resize, NormalizeImage, PrepareForNet
 import sys
 import importlib
-import matplotlib.cm as cm
 from PIL import Image
 
 # Ensure local packages can be imported and provide a top-level 'zoedepth' alias
@@ -86,9 +85,30 @@ for img_path in tqdm(sorted(input_dir.rglob("*"))):
         norm = np.zeros_like(d)
     # convert normalized gray to RGB using jet colormap and save with PIL
     pred_image_normalized = norm  # values in [0,1]
-    jet_cmap = cm.get_cmap('jet')
-    pred_image_rgb = jet_cmap(pred_image_normalized)[:, :, :3]  # take RGB, drop alpha
-    pred_image_rgb = (pred_image_rgb * 255).astype(np.uint8)
+
+    # get a compatible colormap getter across matplotlib versions; fall back to None
+    try:
+        # matplotlib 3.8+ has `colormaps`
+        from matplotlib import colormaps
+        def _get_cmap(name):
+            return colormaps.get_cmap(name)
+    except Exception:
+        try:
+            import matplotlib.cm as _cm
+            def _get_cmap(name):
+                return _cm.get_cmap(name)
+        except Exception:
+            _get_cmap = None
+
+    if _get_cmap is not None:
+        jet_cmap = _get_cmap('jet')
+        pred_image_rgb = jet_cmap(pred_image_normalized)[:, :, :3]  # take RGB, drop alpha
+        pred_image_rgb = (pred_image_rgb * 255).astype(np.uint8)
+    else:
+        # fallback: use OpenCV's colormap (returns BGR), convert to RGB
+        tmp = (pred_image_normalized * 255).astype(np.uint8)
+        tmp_col = cv2.applyColorMap(tmp, cv2.COLORMAP_JET)  # BGR
+        pred_image_rgb = cv2.cvtColor(tmp_col, cv2.COLOR_BGR2RGB)
 
     pil_image = Image.fromarray(pred_image_rgb)
     pil_image.save(str(out_subdir / f"{base}_depth.png"))
