@@ -33,6 +33,7 @@ from tqdm import tqdm
 
 from PIL import Image
 import numpy as np
+import matplotlib.cm as cm
 
 from zoedepth.data.data_mono import DepthDataLoader, remove_leading_slash
 from zoedepth.models.builder import build_model
@@ -163,7 +164,6 @@ def evaluate(model, test_loader, config, round_vals=True, round_precision=3, dev
             # print("Saving images ...")
             from PIL import Image
             import torchvision.transforms as transforms
-            from zoedepth.utils.misc import colorize
 
             os.makedirs(config.save_images, exist_ok=True)
             # def save_image(img, path):
@@ -174,13 +174,34 @@ def evaluate(model, test_loader, config, round_vals=True, round_precision=3, dev
             if vmax is None:
                 vmax = getattr(config, "max_depth_eval", None)
 
-            d = colorize(depth.squeeze().cpu().numpy(), vmin, vmax, cmap='gray')
-            p = colorize(pred.squeeze().cpu().numpy(), vmin, vmax, cmap='gray')
+            def to_jet_pil(arr, target_size):
+                arr_np = np.asarray(arr, dtype=np.float32)
+                arr_np = np.nan_to_num(arr_np, nan=0.0, posinf=0.0, neginf=0.0)
+                arr_min = arr_np.min()
+                arr_max = arr_np.max()
+                if not np.isfinite(arr_min):
+                    arr_min = 0.0
+                if not np.isfinite(arr_max):
+                    arr_max = arr_min
+                denom = arr_max - arr_min
+                if denom > 1e-8:
+                    norm = (arr_np - arr_min) / denom
+                else:
+                    norm = np.zeros_like(arr_np, dtype=np.float32)
+                norm = np.clip(norm, 0.0, 1.0)
+                jet_rgb = cm.get_cmap('jet')(norm)[..., :3]
+                jet_img = Image.fromarray((jet_rgb * 255).astype(np.uint8))
+                if jet_img.size != target_size:
+                    jet_img = jet_img.resize(target_size, resample=Image.BILINEAR)
+                return jet_img
+
+            depth_np = depth.squeeze().detach().cpu().numpy()
+            pred_np = pred.squeeze().detach().cpu().numpy()
             im = transforms.ToPILImage()(image.squeeze().cpu())
             # ensure depth/pred visualizations match the input image resolution
             target_size = im.size  # (width, height)
-            depth_vis = Image.fromarray(d).resize(target_size, resample=Image.BILINEAR)
-            pred_vis = Image.fromarray(p).resize(target_size, resample=Image.BILINEAR)
+            depth_vis = to_jet_pil(depth_np, target_size)
+            pred_vis = to_jet_pil(pred_np, target_size)
 
             im.save(os.path.join(config.save_images, f"{i}_img.png"))
             depth_vis.save(os.path.join(config.save_images, f"{i}_depth.png"))
