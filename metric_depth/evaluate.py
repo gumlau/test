@@ -126,20 +126,36 @@ def infer(model, images, **kwargs):
 
 
 @torch.no_grad()
-def evaluate(model, test_loader, config, round_vals=True, round_precision=3):
+def evaluate(model, test_loader, config, round_vals=True, round_precision=3, device=None):
     model.eval()
+    if device is None:
+        device = next(model.parameters()).device
     metrics = RunningAverageDict()
     instrument_metrics = RunningAverageDict()
     for i, sample in tqdm(enumerate(test_loader), total=len(test_loader)):
         if 'has_valid_depth' in sample:
             if not sample['has_valid_depth']:
                 continue
-        image, depth = sample['image'], sample['depth']
-        image, depth = image.cuda(), depth.cuda()
+        image = sample['image'].to(device)
+        depth = sample['depth']
+        if isinstance(depth, torch.Tensor):
+            depth = depth.to(device)
+        else:
+            depth = torch.as_tensor(depth, device=device)
         depth = depth.squeeze().unsqueeze(0).unsqueeze(0)
-        focal = sample.get('focal', torch.Tensor(
-            [715.0873]).cuda())  # This magic number (focal) is only used for evaluating BTS model
-        pred = infer(model, image, dataset=sample['dataset'][0], focal=focal)
+        focal_val = sample.get('focal', None)
+        if isinstance(focal_val, torch.Tensor):
+            focal = focal_val.to(device)
+        elif focal_val is None:
+            focal = torch.tensor([715.0873], device=device)
+        else:
+            focal = torch.as_tensor([focal_val], device=device, dtype=torch.float32)
+
+        dataset_label = sample['dataset']
+        if isinstance(dataset_label, (list, tuple)):
+            dataset_label = dataset_label[0]
+
+        pred = infer(model, image, dataset=dataset_label, focal=focal)
 
         # Save image, depth, pred for visualization
         if "save_images" in config and config.save_images:
@@ -215,8 +231,12 @@ def evaluate(model, test_loader, config, round_vals=True, round_precision=3):
 def main(config):
     model = build_model(config)
     test_loader = DepthDataLoader(config, 'online_eval').data
-    model = model.cuda()
-    overall_metrics, instrument_metrics = evaluate(model, test_loader, config)
+    use_cuda = torch.cuda.is_available()
+    device = torch.device('cuda') if use_cuda else torch.device('cpu')
+    if not use_cuda:
+        print("CUDA not available; running evaluation on CPU.")
+    model = model.to(device)
+    overall_metrics, instrument_metrics = evaluate(model, test_loader, config, device=device)
     print(f"{colors.fg.green}")
     if instrument_metrics:
         print({"overall": overall_metrics, "instrument": instrument_metrics})

@@ -248,7 +248,15 @@ DATASETS_CONFIG = {
         "instrument_mask_path": os.path.join("..", "final_version_processed"),
         "instrument_mask_path_eval": os.path.join("..", "final_version_processed"),
         "instrument_mask_subdir": "instrument_mask",
-        "filenames_file_eval": _project_path("train_test_inputs", "final_processed_val.txt"),
+        "filenames_file_eval": (
+            _project_path("test.txt")
+            if (PROJECT_ROOT / "test.txt").exists()
+            else (
+                str((PROJECT_ROOT.parent / "test.txt").resolve())
+                if (PROJECT_ROOT.parent / "test.txt").exists()
+                else _project_path("train_test_inputs", "final_processed_val.txt")
+            )
+        ),
         "min_depth_eval": 1e-3,
         "max_depth_eval": 80.0,
         "depth_scale_factor": 256.0,

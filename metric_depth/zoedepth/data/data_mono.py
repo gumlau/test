@@ -26,6 +26,7 @@
 
 import itertools
 import os
+import pathlib
 import random
 
 import numpy as np
@@ -286,6 +287,152 @@ class DataLoadPreprocess(Dataset):
         else:
             self.reader = ImReader()
 
+    def _parse_sample_line(self, line, *, return_meta=False):
+        stripped = line.strip()
+        if not stripped:
+            raise ValueError("Encountered empty sample entry in dataset file.")
+
+        if ',' in stripped:
+            tokens = [token.strip() for token in stripped.split(',') if token.strip()]
+        else:
+            tokens = stripped.split()
+
+        meta = {}
+        if self.config.dataset == 'final_processed':
+            tokens, meta = self._normalise_final_processed_tokens(tokens)
+        if return_meta:
+            return tokens, meta
+        return tokens
+
+    def _normalise_final_processed_tokens(self, tokens):
+        if len(tokens) < 2:
+            return tokens, {}
+
+        img_rel = tokens[0]
+        camera_hint = None
+        if "/left/" in img_rel:
+            camera_hint = "/left/"
+        elif "/right/" in img_rel:
+            camera_hint = "/right/"
+
+        depth_candidates = []
+        depth_rel = None
+        for token in tokens[1:]:
+            if "metric_depth" in token and (camera_hint is None or camera_hint in token):
+                depth_rel = token
+                depth_candidates.append(token)
+                break
+
+        if depth_rel is None:
+            for token in tokens[1:]:
+                if "depth" in token and (camera_hint is None or camera_hint in token):
+                    depth_rel = token
+                    depth_candidates.append(token)
+                    break
+        else:
+            for token in tokens[1:]:
+                if "depth" in token and (camera_hint is None or camera_hint in token):
+                    depth_candidates.append(token)
+                    break
+
+        if depth_rel is None and len(tokens) > 1:
+            depth_rel = tokens[1]
+            depth_candidates.append(tokens[1])
+
+        mask_rel = None
+        for token in tokens[1:]:
+            if "valid_region_mask" in token and (camera_hint is None or camera_hint in token):
+                mask_rel = token
+                break
+
+        focal_token = None
+        for token in tokens[1:]:
+            try:
+                float(token)
+                focal_token = token
+                break
+            except ValueError:
+                continue
+
+        dedup_depth = []
+        for candidate in depth_candidates:
+            if candidate not in dedup_depth:
+                dedup_depth.append(candidate)
+
+        normalised = [img_rel]
+        if depth_rel is None:
+            raise ValueError(f"Unable to determine depth path from tokens: {tokens}")
+        normalised.append(depth_rel)
+        if mask_rel is not None:
+            normalised.append(mask_rel)
+        if focal_token is not None:
+            normalised.append(focal_token)
+        meta = {"depth_candidates": dedup_depth or [depth_rel]}
+        return normalised, meta
+
+    def _resolve_depth_relative_path(self, depth_rel, candidates, base_dir):
+        if base_dir is None:
+            return depth_rel
+
+        def _normalize(rel):
+            rel = remove_leading_slash(rel)
+            return rel
+
+        rels = []
+        for candidate in (candidates or []):
+            if candidate:
+                rels.append(candidate)
+        if depth_rel and depth_rel not in rels:
+            rels.insert(0, depth_rel)
+
+        expanded = []
+        for rel in rels:
+            if not rel:
+                continue
+            rel_norm = _normalize(rel)
+            expanded.append(rel_norm)
+            path_obj = pathlib.Path(rel_norm)
+            suffix = path_obj.suffix.lower()
+            if suffix == '.png':
+                expanded.append(str(path_obj.with_suffix('.npy')))
+            if 'metric_depth' in rel_norm:
+                alt = rel_norm.replace('metric_depth', 'depth')
+                expanded.append(alt)
+                alt_path = pathlib.Path(alt)
+                if alt_path.suffix.lower() == '.png':
+                    expanded.append(str(alt_path.with_suffix('.npy')))
+            elif 'depth' in rel_norm and 'metric_depth' not in rel_norm:
+                alt = rel_norm.replace('depth', 'metric_depth')
+                expanded.append(alt)
+                alt_path = pathlib.Path(alt)
+                if alt_path.suffix.lower() == '.png':
+                    expanded.append(str(alt_path.with_suffix('.npy')))
+
+        seen = set()
+        dedup = []
+        for rel in expanded:
+            if rel in seen:
+                continue
+            seen.add(rel)
+            dedup.append(rel)
+
+        for rel in dedup:
+            abs_path = os.path.join(base_dir, rel)
+            if os.path.exists(abs_path):
+                return rel
+
+        return remove_leading_slash(depth_rel) if depth_rel else depth_rel
+
+    def _load_depth_resource(self, depth_path):
+        suffix = os.path.splitext(depth_path)[1].lower()
+        if suffix == '.npy':
+            data = np.load(depth_path)
+            if data.ndim > 2:
+                data = data[..., 0]
+            data = data.astype(np.float32)
+            return Image.fromarray(data, mode='F')
+        return self.reader.open(depth_path)
+
     def postprocess(self, sample):
         return sample
 
@@ -340,7 +487,7 @@ class DataLoadPreprocess(Dataset):
 
     def __getitem__(self, idx):
         sample_path = self.filenames[idx]
-        parts = sample_path.strip().split()
+        parts, meta = self._parse_sample_line(sample_path, return_meta=True)
 
         if len(parts) < 2:
             raise ValueError(f"Malformed sample entry: '{sample_path}'")
@@ -372,6 +519,16 @@ class DataLoadPreprocess(Dataset):
 
         sample = {}
 
+        depth_candidates = meta.get('depth_candidates', [depth_rel]) if isinstance(meta, dict) else [depth_rel]
+
+        if self.mode == 'online_eval':
+            base_depth_dir = self.config.gt_path_eval
+        else:
+            base_depth_dir = self.config.gt_path
+
+        resolved_depth_rel = self._resolve_depth_relative_path(depth_rel, depth_candidates, base_depth_dir)
+        depth_rel = resolved_depth_rel or depth_rel
+
         if self.mode == 'train':
             img_rel_curr = img_rel
             depth_rel_curr = depth_rel
@@ -387,7 +544,7 @@ class DataLoadPreprocess(Dataset):
                 self.config.gt_path, remove_leading_slash(depth_rel_curr))
 
             image = self.reader.open(image_path)
-            depth_gt_img = self.reader.open(depth_path)
+            depth_gt_img = self._load_depth_resource(depth_path)
             mask_img = self._load_mask_image(mask_rel_curr, mode='train')
             w, h = image.size
 
@@ -488,9 +645,9 @@ class DataLoadPreprocess(Dataset):
                     gt_path, remove_leading_slash(depth_rel))
                 has_valid_depth = False
                 try:
-                    depth_gt_img = self.reader.open(depth_path)
-                    has_valid_depth = True
-                except IOError:
+                    depth_gt_img = self._load_depth_resource(depth_path)
+                    has_valid_depth = depth_gt_img is not None
+                except (IOError, FileNotFoundError):
                     depth_gt_img = None
 
                 if has_valid_depth:
@@ -511,6 +668,7 @@ class DataLoadPreprocess(Dataset):
                     final_mask = self._combine_masks(mask_valid, mask_np)
                     final_mask = final_mask[None, ...]
                 else:
+                    depth_gt = np.zeros((1, 1, 1), dtype=np.float32)
                     final_mask = False
 
             if self.config.do_kb_crop:

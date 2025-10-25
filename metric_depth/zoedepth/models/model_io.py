@@ -22,7 +22,23 @@
 
 # File author: Shariq Farooq Bhat
 
+import os
+from pathlib import Path
+from typing import Iterable
+
 import torch
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_PARENT = PROJECT_ROOT.parent
+
+
+def _deduplicate(seq: Iterable[Path]) -> Iterable[Path]:
+    seen = set()
+    for item in seq:
+        if item in seen:
+            continue
+        seen.add(item)
+        yield item
 
 def load_state_dict(model, state_dict):
     """Load state_dict into model, handling DataParallel and DistributedDataParallel. Also checks for "model" key in state_dict.
@@ -84,8 +100,57 @@ def load_state_from_resource(model, resource: str):
         return load_state_dict_from_url(model, url, progress=True)
 
     elif resource.startswith('local::'):
-        path = resource.split('local::')[1]
-        return load_wts(model, path)
+        path = resource.split('local::', 1)[1].strip()
+        path_obj = Path(path) if path else None
+
+        primary_candidates = []
+        if path_obj is not None and path:
+            primary_candidates.append(path_obj)
+            if not path_obj.is_absolute():
+                primary_candidates.extend([
+                    Path.cwd() / path_obj,
+                    PROJECT_ROOT / path_obj,
+                    PROJECT_ROOT / path_obj.name,
+                    PROJECT_PARENT / path_obj,
+                    PROJECT_PARENT / path_obj.name,
+                ])
+
+        fallback_names = []
+        if path_obj is not None:
+            fallback_names.append(path_obj.name)
+        fallback_names.extend([
+            "ZoeDepthNKv1_21-Oct_15-36-0d48cd37dedf_step4000.pt",
+            "depth_anything_vitl14.pth",
+        ])
+
+        fallback_dirs = [Path.cwd(), PROJECT_ROOT, PROJECT_PARENT]
+        for name in fallback_names:
+            if not name:
+                continue
+            for directory in fallback_dirs:
+                fallback_candidate = directory / name
+                primary_candidates.append(fallback_candidate)
+
+        errors = []
+        for candidate in _deduplicate(primary_candidates):
+            if not candidate.exists():
+                continue
+            try:
+                return load_wts(model, str(candidate))
+            except RuntimeError as exc:
+                errors.append((candidate, exc))
+                continue
+
+        if errors:
+            formatted = "\n".join(
+                f" - {cand}: {err}" for cand, err in errors
+            )
+            raise RuntimeError(
+                "All discovered checkpoints failed to load due to state dict mismatches:\n"
+                f"{formatted}"
+            ) from errors[-1][1]
+
+        raise FileNotFoundError(f"Pretrained resource not found: {path or '[auto-detect]'}")
         
     else:
         raise ValueError("Invalid resource type, only url:: and local:: are supported")
